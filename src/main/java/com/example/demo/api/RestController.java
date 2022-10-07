@@ -176,6 +176,27 @@ public class RestController {
 		 return ResponseEntity.status(HttpStatus.OK).body("{ message : '" + OBJECT_DELETED + "' }");
 	 }
 	 
+	 
+	 @RequestMapping(value = "/delete/{objectType}/{ID}", method = RequestMethod.DELETE, headers = "If-Match")
+	 private ResponseEntity<String> DeleteJSONIfMatch(@PathVariable("objectType") String objectType, 
+			 @PathVariable("ID") String objectID, @RequestHeader(name = HttpHeaders.IF_MATCH) String ifMatch
+			 )
+	 {
+		 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectID);
+		 String ETag = GetETagByETagKey(eTagKey);
+		 String keyOfJSONBody = GenerateKeyForJSONObject(objectType, objectID);
+		 if(ifMatch.equals(ETag))
+		 {
+			 String keyForETag = GenerateETagKeyForJSONObject(objectType, objectID);
+			 redisMemory.del(keyOfJSONBody);
+			 redisMemory.del(keyForETag);
+		 }
+		 else {
+			 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
+		 }
+		 return ResponseEntity.status(HttpStatus.OK).body("{ message : '" + OBJECT_DELETED + "' }");
+	 }
+	 
 	 /**
 	  * 
 	  * @param json
