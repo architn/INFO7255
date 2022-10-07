@@ -27,6 +27,7 @@ import redis.clients.jedis.Jedis;
 public class RestController {
 	
 	 private Jedis redisMemory = new Jedis();
+	 
 	 public final String BAD_REQUEST_MESSAGE = "Error: Bad Request";
 	 public final String SUCCESS_MESSAGE = "Success!";
 	 public final String INTERNAL_SERVER_ERROR = "Error: Internal Server Error";
@@ -118,19 +119,31 @@ public class RestController {
 	            @PathVariable("ID") String objectId,
 	            @RequestHeader(name = HttpHeaders.IF_MATCH) String ifMatch)
 	 {
-		 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectId);
-		 String ETag = GetETagByETagKey(eTagKey);
-		 String hashedETag = GetETagByETagKey(eTagKey);
-		 if(!hashedETag.equals(ifMatch)) 
-		 {
-			 JSONObject jsonObject = GetPlanByKey(GenerateKeyForJSONObject(objectType, objectId));
-			 return ResponseEntity.ok(jsonObject.toString());
-		 }
-		 else 
-		 {
-			 return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(ETag).body("Not Modified");
-		 }
+		 String keyForJSONRequested = GenerateKeyForJSONObject(objectType, objectId);
 		 
+		 try 
+		 {
+			String jsonInString = redisMemory.get(keyForJSONRequested);
+			 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectId);
+			 String ETag = GetETagByETagKey(eTagKey);		 
+			 if(!ETag.equals(ifMatch)) 
+			 {
+				 JSONObject jsonObject = GetPlanByKey(GenerateKeyForJSONObject(objectType, objectId));
+				 return ResponseEntity.status(HttpStatus.OK).eTag(ETag).body(jsonObject.toString());
+			 }
+			 else 
+			 {
+				 return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(ETag).body("Not Modified");
+			 }
+		 }
+		 catch(NullPointerException n) 
+		 {
+			 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
+		 }
+		 catch(Exception ex) 
+		 {
+			 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + ex.getMessage() + "' }");
+		  }
 	 }
 	 
 	 /**
@@ -146,9 +159,16 @@ public class RestController {
 	 {
 		 try {
 			 String keyOfJSONBody = GenerateKeyForJSONObject(objectType, objectID);
-			 String keyForETag = GenerateETagKeyForJSONObject(objectType, objectID);
-			 redisMemory.del(keyOfJSONBody);
-			 redisMemory.del(keyForETag);
+			 if(DoesObjectExistInSystem(keyOfJSONBody))
+			 {
+				 String keyForETag = GenerateETagKeyForJSONObject(objectType, objectID);
+				 redisMemory.del(keyOfJSONBody);
+				 redisMemory.del(keyForETag);
+			 }
+			 else {
+				 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
+			 }
+			 
 		 }
 		 catch(Exception ex) {
 			 
@@ -162,7 +182,8 @@ public class RestController {
 	  * @return
 	  */
 	
-	private JSONObject ValidateWhetherSchemaIsValid(String json) {
+	private JSONObject ValidateWhetherSchemaIsValid(String json) 
+	{
 		InputStream schemaStream = RestController.class.getResourceAsStream("/schema.json");
 		
 		JSONObject jsonSchema = new JSONObject(new JSONTokener(schemaStream));
