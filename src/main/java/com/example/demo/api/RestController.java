@@ -19,6 +19,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import com.example.helper.MD5Helper;
+
 import redis.clients.jedis.Jedis;
 
 @Controller
@@ -42,7 +44,7 @@ public class RestController {
 	 @RequestMapping(value = "/add", method = RequestMethod.POST)
 	 public ResponseEntity<String> Save(@RequestBody String body, @RequestHeader Map<String, String> headers)
 	 {
-		 
+		 String ETag = "";
 		 try {
 			 JSONObject jsonObject = ValidateWhetherSchemaIsValid(body);
 			 String objType = jsonObject.getString("objectType");
@@ -51,6 +53,9 @@ public class RestController {
 			 if(!DoesObjectExistInSystem(keyOfJSONBody))
 			 {
 				 redisMemory.set(keyOfJSONBody, body);
+				 ETag = MD5Helper.hashString(body);
+				 String ETagKey = GenerateETagKeyForJSONObject(objType,objID);
+				 redisMemory.set(ETagKey, ETag);
 			 }
 			 else 
 			 {
@@ -65,10 +70,15 @@ public class RestController {
 			 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + INTERNAL_SERVER_ERROR + "'}");
 
 		 }
-		 return ResponseEntity.status(HttpStatus.CREATED).body("{ message : '" + SUCCESS_MESSAGE + "'}");
+		 return ResponseEntity.status(HttpStatus.CREATED).eTag(ETag).body("{ message : '" + SUCCESS_MESSAGE + "'}");
 	 }
 	 
-	 
+	 /**
+	  * 
+	  * @param objectType
+	  * @param objectID
+	  * @return
+	  */
 	 
 	 @SuppressWarnings("unused")
 	 @RequestMapping(value = "/get/{objectType}/{ID}", method = RequestMethod.GET)
@@ -76,23 +86,31 @@ public class RestController {
 	 private ResponseEntity<String> GetJSON(@PathVariable("objectType") String objectType, @PathVariable("ID") String objectID) 
 	 {
 		 	String jsonInString = "";
+		 	String ETag = "";
 			try {
 				 String keyOfJSONBody = objectType + "-"+ objectID;
 				 jsonInString = redisMemory.get(keyOfJSONBody);
-				 if(jsonInString == null) {
-					 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
-				 }
 				 JSONObject jsonObject = new JSONObject(new JSONTokener(jsonInString));
-				 
-				 
+				 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectID);
+				 ETag = GetETagByETagKey(eTagKey);
+				 String hashedETag = GetETagByETagKey(eTagKey);
 			}
-			
+			catch(NullPointerException n) {
+				 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
+			}
 			catch(Exception ex) {
 				return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + ex.getMessage() + "' }");
 			}
-			return ResponseEntity.ok(jsonInString);
+			return ResponseEntity.status(HttpStatus.OK).eTag(ETag).body(jsonInString);
 	 }
 	 
+	 /**
+	  * 
+	  * @param objectType
+	  * @param objectId
+	  * @param ifMatch
+	  * @return
+	  */
 	 
 	 @RequestMapping(value = "/get/{objectType}/{ID}", method = RequestMethod.GET, headers = "If-Match")
 	 @ResponseBody
@@ -100,24 +118,49 @@ public class RestController {
 	            @PathVariable("ID") String objectId,
 	            @RequestHeader(name = HttpHeaders.IF_MATCH) String ifMatch)
 	 {
-		 String jsonInString = "";
-		 return ResponseEntity.ok(jsonInString);
+		 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectId);
+		 String ETag = GetETagByETagKey(eTagKey);
+		 String hashedETag = GetETagByETagKey(eTagKey);
+		 if(!hashedETag.equals(ifMatch)) 
+		 {
+			 JSONObject jsonObject = GetPlanByKey(GenerateKeyForJSONObject(objectType, objectId));
+			 return ResponseEntity.ok(jsonObject.toString());
+		 }
+		 else 
+		 {
+			 return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(ETag).body("Not Modified");
+		 }
+		 
 	 }
+	 
+	 /**
+	  * 
+	  * @param objectType
+	  * @param objectID
+	  * @return
+	  */
 	 
 	 @RequestMapping(value = "/delete/{objectType}/{ID}", method = RequestMethod.DELETE)
 	 @ResponseBody
 	 private ResponseEntity<String> DeleteJSON(@PathVariable("objectType") String objectType, @PathVariable("ID") String objectID)
 	 {
 		 try {
-			 String keyOfJSONBody = objectType + "-"+ objectID;
+			 String keyOfJSONBody = GenerateKeyForJSONObject(objectType, objectID);
+			 String keyForETag = GenerateETagKeyForJSONObject(objectType, objectID);
 			 redisMemory.del(keyOfJSONBody);
-			 
+			 redisMemory.del(keyForETag);
 		 }
 		 catch(Exception ex) {
 			 
 		 }
-		 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + OBJECT_DELETED + "' }");
+		 return ResponseEntity.status(HttpStatus.OK).body("{ message : '" + OBJECT_DELETED + "' }");
 	 }
+	 
+	 /**
+	  * 
+	  * @param json
+	  * @return
+	  */
 	
 	private JSONObject ValidateWhetherSchemaIsValid(String json) {
 		InputStream schemaStream = RestController.class.getResourceAsStream("/schema.json");
@@ -130,13 +173,27 @@ public class RestController {
 		return jsonCurrentObject;
 	}
 	
+	/**
+	 * 
+	 * @param objectType
+	 * @param objectID
+	 * @return
+	 */
+	
 	public static String GenerateKeyForJSONObject(String objectType, String objectID)
 	{
 		String keyForJSON = objectType + "-" + objectID;
 		return keyForJSON;
 	}
 	
-	public boolean DoesObjectExistInSystem(String keyOfJSON) {
+	/**
+	 * 
+	 * @param keyOfJSON
+	 * @return
+	 */
+	
+	public boolean DoesObjectExistInSystem(String keyOfJSON) 
+	{
 		String jsonInString = redisMemory.get(keyOfJSON);
 		if(jsonInString != null)
 		{
@@ -145,6 +202,40 @@ public class RestController {
 		return false;
 	}
 	
+	/**
+	 * 
+	 * @param objectType
+	 * @param objectID
+	 * @return
+	 */
 	
+	public String GenerateETagKeyForJSONObject(String objectType, String objectID)
+	{
+		return objectType + "|" + objectID;
+	}
+	
+	/**
+	 * 
+	 * @param eTagKey
+	 * @return
+	 */
+	
+	public String GetETagByETagKey(String eTagKey)
+	{
+		String eTag = redisMemory.get(eTagKey);
+		return eTag;
+	}
+	
+	/**
+	 * 
+	 * @param jsonKey
+	 * @return
+	 */
+	
+	public JSONObject GetPlanByKey(String jsonKey)
+	{
+		String jsonInString = redisMemory.get(jsonKey);
+		return new JSONObject(new JSONTokener(jsonInString));
+	}
 	
 }
