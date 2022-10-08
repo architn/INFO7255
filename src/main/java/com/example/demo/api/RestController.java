@@ -173,7 +173,7 @@ public class RestController {
 		 catch(Exception ex) {
 			 
 		 }
-		 return ResponseEntity.status(HttpStatus.OK).body("{ message : '" + OBJECT_DELETED + "' }");
+		 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + OBJECT_DELETED + "' }");
 	 }
 	 
 	 
@@ -194,7 +194,7 @@ public class RestController {
 		 else {
 			 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
 		 }
-		 return ResponseEntity.status(HttpStatus.OK).body("{ message : '" + OBJECT_DELETED + "' }");
+		 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + OBJECT_DELETED + "' }");
 	 }
 	 
 	 /**
