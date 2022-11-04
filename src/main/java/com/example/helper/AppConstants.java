@@ -13,5 +13,6 @@ public class AppConstants {
 	public final String OBJECT_NOT_FOUND = "Error: Plan not found";
 	public final String OBJECT_DELETED = "Plan deleted!";
 	public final String OBJECT_ALREADY_EXISTS = "Plan already exists!";
+	public final String OBJECT_UPDATED = "Plan was successfully updated!";
 
 }

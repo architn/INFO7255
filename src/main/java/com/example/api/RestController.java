@@ -1,10 +1,11 @@
-package com.example.demo.api;
+package com.example.api;
 
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.everit.json.schema.ValidationException;
-
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.springframework.http.HttpHeaders;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import com.example.helper.MD5Helper;
 import com.example.service.AuthorizationService;
 import com.example.service.JSONService;
 
@@ -234,36 +236,51 @@ public class RestController extends API {
 		 
 	 }
 	 
-	 @RequestMapping(value = "/{object}/{id}", method = RequestMethod.PATCH, headers = "If-Match")
+	 @RequestMapping(value = "/edit/{object}/{id}", method = RequestMethod.PATCH, headers = "If-Match")
 	    @ResponseBody
 	    public ResponseEntity<String> patchJsonIfNoneMatch(@PathVariable("object") String objectType,
 	            @PathVariable("id") String objectId, @RequestBody String body,
-	            @RequestHeader(name = HttpHeaders.IF_MATCH) String eTag, 
-	            @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token) 
+	            @RequestHeader(name = HttpHeaders.IF_MATCH) String eTagFromHeader, 
+	            @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token) throws NoSuchAlgorithmException 
 	 {
-	        String actualEtag = null;
-	        JSONObject jsonObject = null;
-	        String resultJsonString = null;
-	        
-	        authorizationStatus = authService.authorize(token);
-			if(authorizationStatus.containsValue(true))
-			{
-				String key = jsonService.GenerateKeyForJSONObject(objectType, objectId);
-				jsonObject = jsonService.GetPlanByKey(key);
-				if(!jsonService.DoesPlanExistInSystem(key))
+	        try
+	        {
+	        	String actualEtag = null;
+	        	String newETag = "";
+		        JSONObject jsonObject = null;
+		        
+		        authorizationStatus = authService.authorize(token);
+				if(authorizationStatus.containsValue(true))
 				{
-					return notFound(AppConstants.OBJECT_NOT_FOUND);
+					String key = jsonService.GenerateKeyForJSONObject(objectType, objectId);
+					jsonObject = jsonService.GetPlanByKey(key);
+					if(!jsonService.DoesPlanExistInSystem(key))
+					{
+						return notFound(AppConstants.OBJECT_NOT_FOUND);
+					}
+					actualEtag = jsonService.GetETagOfSavedPlan(objectType, objectId);
+
+					  if (eTagFromHeader != null && !eTagFromHeader.equals(actualEtag)) 
+					  {
+			                return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED).eTag(actualEtag)
+			                        .body(new JSONObject().put("message", "Plan was updated by another user").toString());
+			           }
+					  JSONObject bodyOfUpdatedJSON = jsonService.ValidateWhetherSchemaIsValid(body);
+					  jsonObject = jsonService.mergeJson(bodyOfUpdatedJSON, jsonService.GenerateKeyForJSONObject(objectType, objectId));
+					  
+					  if(jsonObject == null || jsonObject.isEmpty())
+					  {
+						  return notFound(AppConstants.OBJECT_NOT_FOUND);
+					  }
+					  newETag = MD5Helper.hashString(body);
+					  jsonService.updatePlan(bodyOfUpdatedJSON, newETag, objectType, objectId);
 				}
-				actualEtag = jsonService.GetETagOfSavedPlan(objectType, objectId);
-				
-				  if (eTag != null && !eTag.equals(actualEtag)) 
-				  {
-		                return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED).eTag(actualEtag)
-		                        .body(new JSONObject().put("message", "Plan has been updated by another user!!").toString());
-		           }
-				
-			}
-	       return OK(resultJsonString, actualEtag);
+		       return successfulUpdate(newETag);
+	        }
+	        catch(JSONException jex)
+	        {
+	        	return internalServerError(AppConstants.INVALID_FORMAT);
+	        }
 
 	    }
 	 

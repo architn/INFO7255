@@ -1,4 +1,4 @@
-package com.example.demo.api;
+package com.example.api;
 
 import java.util.HashMap;
 
@@ -20,6 +20,8 @@ public class AuthorizationController extends API {
 	AuthorizationService authService = new AuthorizationService();
 	AppConstants AppConstants = new AppConstants();
 	static HashMap<String, Boolean> authorizationStatus = new HashMap<>();
+	
+	
 	 @RequestMapping(value = "/token", method = RequestMethod.GET)
 	 public ResponseEntity<String> GenerateToken()
 	 {
@@ -28,7 +30,7 @@ public class AuthorizationController extends API {
 			 token = authService.generateToken();
 			 JSONObject obj = new JSONObject();
 			 obj.put("token", token);
-			 return  ResponseEntity.status(HttpStatus.CREATED).body("{ token : '" + token + "' }");
+			 return  ResponseEntity.status(HttpStatus.CREATED).body(new JSONObject().put("token", token).toString());
 		 }
 		 catch(Exception ex)
 		 {
@@ -45,7 +47,7 @@ public class AuthorizationController extends API {
 			 authorizationStatus = authService.authorize(token);
 			 if(authorizationStatus.containsValue(true))
 			 {
-				 return ResponseEntity.status(HttpStatus.CREATED).body("{ message : '" + AppConstants.TOKEN_SUCCESS + "' }");
+				 return ResponseEntity.status(HttpStatus.CREATED).body(new JSONObject().put("message", AppConstants.TOKEN_SUCCESS).toString());
 
 			 }
 			 else

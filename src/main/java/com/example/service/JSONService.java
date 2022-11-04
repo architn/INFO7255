@@ -1,10 +1,10 @@
 package com.example.service;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
 import com.example.dao.PlanDAO;
-import com.example.demo.api.RestController;
 import com.example.helper.MD5Helper;
 
 import java.io.InputStream;
@@ -26,7 +26,7 @@ public class JSONService {
 	
 	public JSONObject ValidateWhetherSchemaIsValid(String json) 
 	{
-		InputStream schemaStream = RestController.class.getResourceAsStream("/schema.json");
+		InputStream schemaStream = JSONService.class.getResourceAsStream("/schema.json");
 		
 		JSONObject jsonSchema = new JSONObject(new JSONTokener(schemaStream));
 		JSONObject jsonCurrentObject = new JSONObject(new JSONTokener(json));
@@ -133,4 +133,84 @@ public class JSONService {
 
 	}
 	
+	 // merge the incoming json object with the object in db.
+    public JSONObject mergeJson(JSONObject json, String objectKey) 
+    {
+        JSONObject savedObject = GetPlanByKey(objectKey);
+        if (savedObject == null)
+            return null;
+
+        // iterate the new json object
+        for(String jsonKey : json.keySet()) {
+            Object jsonValue = json.get(jsonKey);
+
+            // check if this is an existing object
+            if (savedObject.get(jsonKey) == null) {
+                savedObject.put(jsonKey, jsonValue);
+            } 
+            else 
+            {
+                if (jsonValue instanceof JSONObject) 
+                {
+                    JSONObject jsonValueObject = (JSONObject)jsonValue;
+                    String jsonObjKey = jsonKey + "_" + jsonValueObject.get("objectId");
+                    if (((JSONObject)savedObject.get(jsonKey)).get("objectId").equals(jsonValueObject.get("objectId"))) 
+                    {
+                        savedObject.put(jsonKey, jsonValue);
+                    } 
+                    else 
+                    {
+                        JSONObject updatedJsonValue = this.mergeJson(jsonValueObject, jsonObjKey);
+                        savedObject.put(jsonKey, updatedJsonValue);
+                    }
+                } 
+                else if (jsonValue instanceof JSONArray) 
+                {
+                    JSONArray jsonValueArray = (JSONArray) jsonValue;
+                    JSONArray savedJSONArray = savedObject.getJSONArray(jsonKey);
+                    for (int i = 0; i < jsonValueArray.length(); i++) 
+                    {
+                        JSONObject arrayItem = (JSONObject)jsonValueArray.get(i);
+                        //check if objectId already exists in savedJSONArray
+                        int index = getIndexOfObjectId(savedJSONArray, (String)arrayItem.get("objectId"));
+                        if(index >= 0) 
+                        {
+                            savedJSONArray.remove(index);
+                        }
+                        savedJSONArray.put(arrayItem);
+                    }
+                    savedObject.put(jsonKey, savedJSONArray);
+                } 
+                else 
+                {
+                    savedObject.put(jsonKey, jsonValue);
+                }
+            }
+
+        }
+        return savedObject;
+    }
+    
+    public void updatePlan(JSONObject json, String ETag, String objectType, String objectId )
+    {
+    	String keyOfJSONBody = GenerateKeyForJSONObject(objectType, objectId);
+    	String keyForETag = GenerateETagKeyForJSONObject(objectType, objectId);
+    	planDAO.deletePlanFromRedis(keyOfJSONBody, keyForETag);
+    	
+    	planDAO.savePlanToRedis(keyForETag, ETag, keyOfJSONBody, json.toString());
+    }
+    
+    private int getIndexOfObjectId(JSONArray array, String objectId) {
+    	 
+
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject arrayObj = (JSONObject)array.get(i);
+            String itemId = (String)arrayObj.get("objectId");
+            if (objectId.equals(itemId)){
+                return i;
+            }
+        }
+
+        return -1;
+    }
 }
