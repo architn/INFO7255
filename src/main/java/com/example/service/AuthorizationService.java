@@ -1,6 +1,7 @@
 package com.example.service;
 
 import java.util.Date;
+import java.util.HashMap;
 
 import org.springframework.stereotype.Service;
 import java.text.ParseException;
@@ -40,15 +41,18 @@ public class AuthorizationService {
 		return signedJWT.serialize();
 	}
 	
-	public String authorize(String authorization)
+	public HashMap<String, Boolean> authorize(String authorization)
 	{
+		HashMap<String, Boolean> authorizationStatus = new HashMap<String, Boolean>();
 		if(authorization == null || authorization.isEmpty())
 		{
-			return "NO_TOKEN_FOUND";
+			authorizationStatus.put("NO_TOKEN_FOUND", false);
+			return authorizationStatus;
 		}
 		if(!authorization.contains("Bearer"))
 		{
-			return "INVALID_FORMAT";
+			authorizationStatus.put("INVALID_FORMAT", false);
+			return authorizationStatus;
 		}
         String token = authorization.split(" ")[1];
 
@@ -58,19 +62,27 @@ public class AuthorizationService {
 
             if (!signedJWT.verify(verifier))
             {
-            	return "INVALID_TOKEN";
+            	authorizationStatus.put("INVALID_TOKEN", false);
+            	return authorizationStatus;
             }
 
             Date expirationTime = signedJWT.getJWTClaimsSet().getExpirationTime();
             if (new Date().after(expirationTime)) 
             {
-                return "TOKEN_EXPIRED";
+            	authorizationStatus.put("TOKEN_EXPIRED", false);
+                return authorizationStatus;
             }
 		}
 		catch(JOSEException | ParseException e) {
-			return "INVALID_TOKEN";
+			authorizationStatus.put("INVALID_TOKEN", false);
+			return authorizationStatus;
 		}
-		
-		return "VALID_TOKEN";
+		catch(NullPointerException n)
+		{
+			authorizationStatus.put("INVALID_TOKEN", false);
+			return authorizationStatus;
+		}
+		authorizationStatus.put("VALID_TOKEN", true);
+		return authorizationStatus;
 	}
 }

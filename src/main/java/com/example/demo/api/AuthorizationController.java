@@ -1,5 +1,7 @@
 package com.example.demo.api;
 
+import java.util.HashMap;
+
 import org.json.JSONObject;
 //import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -12,12 +14,12 @@ import com.example.helper.*;
 import com.example.service.AuthorizationService;
 
 @Controller
-public class AuthorizationController {
+public class AuthorizationController extends API {
 
 //	@Autowired
 	AuthorizationService authService = new AuthorizationService();
 	AppConstants AppConstants = new AppConstants();
-	
+	static HashMap<String, Boolean> authorizationStatus = new HashMap<>();
 	 @RequestMapping(value = "/token", method = RequestMethod.GET)
 	 public ResponseEntity<String> GenerateToken()
 	 {
@@ -40,8 +42,8 @@ public class AuthorizationController {
 	 {
 		 String tokenStatus = "";
 		 try {
-			  tokenStatus = authService.authorize(token);
-			 if(tokenStatus.equals(AppConstants.VALID_TOKEN))
+			 authorizationStatus = authService.authorize(token);
+			 if(authorizationStatus.containsValue(true))
 			 {
 				 return ResponseEntity.status(HttpStatus.CREATED).body("{ message : '" + AppConstants.TOKEN_SUCCESS + "' }");
 

@@ -1,11 +1,10 @@
 package com.example.demo.api;
 
-import java.io.InputStream;
+import java.util.HashMap;
 import java.util.Map;
 
-import org.everit.json.schema.Schema;
 import org.everit.json.schema.ValidationException;
-import org.everit.json.schema.loader.SchemaLoader;
+
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.springframework.http.HttpHeaders;
@@ -19,21 +18,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-import com.example.helper.MD5Helper;
+import com.example.service.AuthorizationService;
+import com.example.service.JSONService;
 
-import redis.clients.jedis.Jedis;
 
 @Controller
-public class RestController {
+public class RestController extends API {
 	
-	 private Jedis redisMemory = new Jedis();
 	 
-	 public final String BAD_REQUEST_MESSAGE = "Error: Bad Request";
-	 public final String SUCCESS_MESSAGE = "Success!";
-	 public final String INTERNAL_SERVER_ERROR = "Error: Internal Server Error";
-	 public final String OBJECT_NOT_FOUND = "Error: Plan not found";
-	 public final String OBJECT_DELETED = "Plan deleted!";
-	 public final String OBJECT_ALREADY_EXISTS = "Plan already exists!";
+	 static HashMap<String, Boolean> authorizationStatus = new HashMap<>();
+	 
+	 AuthorizationService authService = new AuthorizationService();
+	 JSONService jsonService = new JSONService();
+
+
 	 
 	 /**
 	  * This method is used to save JSON data to Redis
@@ -43,35 +41,41 @@ public class RestController {
 	  */
 	 
 	 @RequestMapping(value = "/add", method = RequestMethod.POST)
-	 public ResponseEntity<String> Save(@RequestBody String body, @RequestHeader Map<String, String> headers)
+	 public ResponseEntity<String> Save(@RequestBody String body, @RequestHeader Map<String, String> headers, 
+			 @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token)
 	 {
-		 String ETag = "";
-		 try {
-			 JSONObject jsonObject = ValidateWhetherSchemaIsValid(body);
-			 String objType = jsonObject.getString("objectType");
-			 String objID = jsonObject.getString("objectId");
-			 String keyOfJSONBody = GenerateKeyForJSONObject(objType, objID);
-			 if(!DoesObjectExistInSystem(keyOfJSONBody))
-			 {
-				 redisMemory.set(keyOfJSONBody, body);
-				 ETag = MD5Helper.hashString(body);
-				 String ETagKey = GenerateETagKeyForJSONObject(objType,objID);
-				 redisMemory.set(ETagKey, ETag);
+		authorizationStatus = authService.authorize(token);
+	 	if(authorizationStatus.containsValue(true))
+	 	{
+	 		String ETag = "";
+			 try {
+				 JSONObject jsonObject = jsonService.ValidateWhetherSchemaIsValid(body);
+				 String objType = jsonObject.getString("objectType");
+				 String objID = jsonObject.getString("objectId");
+				 String keyOfJSONBody = jsonService.GenerateKeyForJSONObject(objType, objID);
+				 if(!jsonService.DoesPlanExistInSystem(keyOfJSONBody))
+				 {
+					 ETag = jsonService.saveJSON(body, objType, objID);
+				 }
+				 else 
+				 {
+					 return ResponseEntity.status(HttpStatus.CONFLICT).body("{ message : '" + AppConstants.OBJECT_ALREADY_EXISTS + "'}");
+				 }
+				 
 			 }
-			 else 
-			 {
-				 return ResponseEntity.status(HttpStatus.CONFLICT).body("{ message : '" + OBJECT_ALREADY_EXISTS + "'}");
-			 }
-			 
-		 }
-		 catch(ValidationException v) {
-				return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("{ message : '" + v.getMessage() + "' }");
-			}
-		 catch(Exception ex) {
-			 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + INTERNAL_SERVER_ERROR + "'}");
+			 catch(ValidationException v) {
+					return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("{ message : '" + v.getMessage() + "' }");
+				}
+			 catch(Exception ex) {
+				 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + AppConstants.INTERNAL_SERVER_ERROR + "'}");
 
-		 }
-		 return ResponseEntity.status(HttpStatus.CREATED).eTag(ETag).body("{ message : '" + SUCCESS_MESSAGE + "'}");
+			 }
+			 return created(ETag);
+	 	}
+	 	else
+	 	{
+			return ResponseEntity.status(HttpStatus.FORBIDDEN).body("{ message : '" +authorizationStatus.keySet().toString() + "' }");
+	 	}
 	 }
 	 
 	 /**
@@ -84,25 +88,34 @@ public class RestController {
 	 @SuppressWarnings("unused")
 	 @RequestMapping(value = "/get/{objectType}/{ID}", method = RequestMethod.GET)
 	 @ResponseBody
-	 private ResponseEntity<String> GetJSON(@PathVariable("objectType") String objectType, @PathVariable("ID") String objectID) 
+	 private ResponseEntity<String> GetJSON(@PathVariable("objectType") String objectType, @PathVariable("ID") String objectID, 
+			 @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token) 
 	 {
-		 	String jsonInString = "";
-		 	String ETag = "";
-			try {
-				 String keyOfJSONBody = objectType + "-"+ objectID;
-				 jsonInString = redisMemory.get(keyOfJSONBody);
-				 JSONObject jsonObject = new JSONObject(new JSONTokener(jsonInString));
-				 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectID);
-				 ETag = GetETagByETagKey(eTagKey);
-				 String hashedETag = GetETagByETagKey(eTagKey);
-			}
-			catch(NullPointerException n) {
-				 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
-			}
-			catch(Exception ex) {
-				return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + ex.getMessage() + "' }");
-			}
-			return ResponseEntity.status(HttpStatus.OK).eTag(ETag).body(jsonInString);
+		 	authorizationStatus = authService.authorize(token);
+		 	if(authorizationStatus.containsValue(true))
+		 	{
+		 		String jsonInString = "";
+			 	String ETag = "";
+				try {
+					 jsonInString = jsonService.getPlanRecord(objectType, objectID);
+					 JSONObject jsonObject = new JSONObject(new JSONTokener(jsonInString));
+					 String eTagKey = jsonService.GenerateETagKeyForJSONObject(objectType, objectID);
+					 ETag = jsonService.GetETagByETagKey(eTagKey);
+					 String hashedETag = jsonService.GetETagByETagKey(eTagKey);
+				}
+				catch(NullPointerException n) {
+					 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + AppConstants.OBJECT_NOT_FOUND + "' }");
+				}
+				catch(Exception ex) {
+					return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + ex.getMessage() + "' }");
+				}
+				return ResponseEntity.status(HttpStatus.OK).eTag(ETag).body(jsonInString);
+		 	}
+		 	else 
+		 	{
+				return ResponseEntity.status(HttpStatus.FORBIDDEN).body("{ message : '" +authorizationStatus.keySet().toString() + "' }");
+		 	}
+		 	
 	 }
 	 
 	 /**
@@ -117,33 +130,39 @@ public class RestController {
 	 @ResponseBody
 	 private ResponseEntity<String> GetJSONWithETag(@PathVariable("objectType") String objectType,
 	            @PathVariable("ID") String objectId,
-	            @RequestHeader(name = HttpHeaders.IF_MATCH) String ifMatch)
+	            @RequestHeader(name = HttpHeaders.IF_MATCH) String ifMatch, @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token)
 	 {
-		 String keyForJSONRequested = GenerateKeyForJSONObject(objectType, objectId);
+		 authorizationStatus = authService.authorize(token);
+		 if(authorizationStatus.containsValue(true))
+		 {
+			 try 
+			 {
+				 String eTagKey = jsonService.GenerateETagKeyForJSONObject(objectType, objectId);
+				 String ETag = jsonService.GetETagByETagKey(eTagKey);		 
+				 if(!ETag.equals(ifMatch)) 
+				 {
+					 JSONObject jsonObject = jsonService.GetPlanByKey(jsonService.GenerateKeyForJSONObject(objectType, objectId));
+					 return ResponseEntity.status(HttpStatus.OK).eTag(ETag).body(jsonObject.toString());
+				 }
+				 else 
+				 {
+					 return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(ETag).body("Not Modified");
+				 }
+			 }
+			 catch(NullPointerException n) 
+			 {
+				 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + AppConstants.OBJECT_NOT_FOUND + "' }");
+			 }
+			 catch(Exception ex) 
+			 {
+				 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + ex.getMessage() + "' }");
+			  }
+		 }
+		 else 
+		 {
+			 return ResponseEntity.status(HttpStatus.FORBIDDEN).body("{ message : '" +authorizationStatus.keySet().toString() + "' }");
+		 }
 		 
-		 try 
-		 {
-			String jsonInString = redisMemory.get(keyForJSONRequested);
-			 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectId);
-			 String ETag = GetETagByETagKey(eTagKey);		 
-			 if(!ETag.equals(ifMatch)) 
-			 {
-				 JSONObject jsonObject = GetPlanByKey(GenerateKeyForJSONObject(objectType, objectId));
-				 return ResponseEntity.status(HttpStatus.OK).eTag(ETag).body(jsonObject.toString());
-			 }
-			 else 
-			 {
-				 return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(ETag).body("Not Modified");
-			 }
-		 }
-		 catch(NullPointerException n) 
-		 {
-			 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
-		 }
-		 catch(Exception ex) 
-		 {
-			 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("{ message : '" + ex.getMessage() + "' }");
-		  }
 	 }
 	 
 	 /**
@@ -155,129 +174,99 @@ public class RestController {
 	 
 	 @RequestMapping(value = "/delete/{objectType}/{ID}", method = RequestMethod.DELETE)
 	 @ResponseBody
-	 private ResponseEntity<String> DeleteJSON(@PathVariable("objectType") String objectType, @PathVariable("ID") String objectID)
+	 private ResponseEntity<String> DeleteJSON(@PathVariable("objectType") String objectType, @PathVariable("ID") String objectID, 
+			 @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token)
 	 {
-		 try {
-			 String keyOfJSONBody = GenerateKeyForJSONObject(objectType, objectID);
-			 if(DoesObjectExistInSystem(keyOfJSONBody))
-			 {
-				 String keyForETag = GenerateETagKeyForJSONObject(objectType, objectID);
-				 redisMemory.del(keyOfJSONBody);
-				 redisMemory.del(keyForETag);
+		 authorizationStatus = authService.authorize(token);
+		 if(authorizationStatus.containsValue(true))
+		 {
+			 try {
+				 String keyOfJSONBody = jsonService.GenerateKeyForJSONObject(objectType, objectID);
+				 if(jsonService.DoesPlanExistInSystem(keyOfJSONBody))
+				 {
+					jsonService.deletePlanRecord(objectType, objectID);
+					 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + AppConstants.OBJECT_DELETED + "' }");
+				 }
+				 else 
+				 {
+					 return notFound(AppConstants.OBJECT_NOT_FOUND);				 }
+			 	  }
+			 catch(Exception ex) {
+				 
 			 }
-			 else {
-				 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
-			 }
-			 
+			 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + AppConstants.OBJECT_DELETED + "' }");
 		 }
-		 catch(Exception ex) {
-			 
+		 else
+		 {
+			 return ResponseEntity.status(HttpStatus.FORBIDDEN).body("{ message : '" +authorizationStatus.keySet().toString() + "' }");
 		 }
-		 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + OBJECT_DELETED + "' }");
+		 
 	 }
 	 
 	 
 	 @RequestMapping(value = "/delete/{objectType}/{ID}", method = RequestMethod.DELETE, headers = "If-Match")
+	 @ResponseBody
 	 private ResponseEntity<String> DeleteJSONIfMatch(@PathVariable("objectType") String objectType, 
-			 @PathVariable("ID") String objectID, @RequestHeader(name = HttpHeaders.IF_MATCH) String ifMatch
+			 @PathVariable("ID") String objectID, @RequestHeader(name = HttpHeaders.IF_MATCH) String ifMatch, 
+			 @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token
 			 )
 	 {
-		 String eTagKey = GenerateETagKeyForJSONObject(objectType, objectID);
-		 String ETag = GetETagByETagKey(eTagKey);
-		 String keyOfJSONBody = GenerateKeyForJSONObject(objectType, objectID);
-		 if(ifMatch.equals(ETag))
+		 authorizationStatus = authService.authorize(token);
+		 if(authorizationStatus.containsValue(true))
 		 {
-			 String keyForETag = GenerateETagKeyForJSONObject(objectType, objectID);
-			 redisMemory.del(keyOfJSONBody);
-			 redisMemory.del(keyForETag);
+			 String eTagKey = jsonService.GenerateETagKeyForJSONObject(objectType, objectID);
+			 String ETag = jsonService.GetETagByETagKey(eTagKey);
+			 if(ifMatch.equals(ETag))
+			 {
+				 jsonService.deletePlanRecord(objectType, objectID);
+
+			 }
+			 else 
+			 {
+				 return notFound(AppConstants.OBJECT_NOT_FOUND);
+			 }
+			 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + AppConstants.OBJECT_DELETED + "' }");
 		 }
-		 else {
-			 return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{ message : '" + OBJECT_NOT_FOUND + "' }");
+		 else
+		 {
+			 return ResponseEntity.status(HttpStatus.FORBIDDEN).body("{ message : '" +authorizationStatus.keySet().toString() + "' }");
 		 }
-		 return ResponseEntity.status(HttpStatus.NO_CONTENT).body("{ message : '" + OBJECT_DELETED + "' }");
+		 
 	 }
 	 
-	 /**
-	  * 
-	  * @param json
-	  * @return
-	  */
-	
-	private JSONObject ValidateWhetherSchemaIsValid(String json) 
-	{
-		InputStream schemaStream = RestController.class.getResourceAsStream("/schema.json");
-		
-		JSONObject jsonSchema = new JSONObject(new JSONTokener(schemaStream));
-		JSONObject jsonCurrentObject = new JSONObject(new JSONTokener(json));
-		
-		Schema schema = SchemaLoader.load(jsonSchema);
-		schema.validate(jsonCurrentObject);
-		return jsonCurrentObject;
-	}
-	
-	/**
-	 * 
-	 * @param objectType
-	 * @param objectID
-	 * @return
-	 */
-	
-	public static String GenerateKeyForJSONObject(String objectType, String objectID)
-	{
-		String keyForJSON = objectType + "-" + objectID;
-		return keyForJSON;
-	}
-	
-	/**
-	 * 
-	 * @param keyOfJSON
-	 * @return
-	 */
-	
-	public boolean DoesObjectExistInSystem(String keyOfJSON) 
-	{
-		String jsonInString = redisMemory.get(keyOfJSON);
-		if(jsonInString != null)
-		{
-			return true;
-		}
-		return false;
-	}
-	
-	/**
-	 * 
-	 * @param objectType
-	 * @param objectID
-	 * @return
-	 */
-	
-	public String GenerateETagKeyForJSONObject(String objectType, String objectID)
-	{
-		return objectType + "|" + objectID;
-	}
-	
-	/**
-	 * 
-	 * @param eTagKey
-	 * @return
-	 */
-	
-	public String GetETagByETagKey(String eTagKey)
-	{
-		String eTag = redisMemory.get(eTagKey);
-		return eTag;
-	}
-	
-	/**
-	 * 
-	 * @param jsonKey
-	 * @return
-	 */
-	
-	public JSONObject GetPlanByKey(String jsonKey)
-	{
-		String jsonInString = redisMemory.get(jsonKey);
-		return new JSONObject(new JSONTokener(jsonInString));
-	}
+	 @RequestMapping(value = "/{object}/{id}", method = RequestMethod.PATCH, headers = "If-Match")
+	    @ResponseBody
+	    public ResponseEntity<String> patchJsonIfNoneMatch(@PathVariable("object") String objectType,
+	            @PathVariable("id") String objectId, @RequestBody String body,
+	            @RequestHeader(name = HttpHeaders.IF_MATCH) String eTag, 
+	            @RequestHeader(name = HttpHeaders.AUTHORIZATION) String token) 
+	 {
+	        String actualEtag = null;
+	        JSONObject jsonObject = null;
+	        String resultJsonString = null;
+	        
+	        authorizationStatus = authService.authorize(token);
+			if(authorizationStatus.containsValue(true))
+			{
+				String key = jsonService.GenerateKeyForJSONObject(objectType, objectId);
+				jsonObject = jsonService.GetPlanByKey(key);
+				if(!jsonService.DoesPlanExistInSystem(key))
+				{
+					return notFound(AppConstants.OBJECT_NOT_FOUND);
+				}
+				actualEtag = jsonService.GetETagOfSavedPlan(objectType, objectId);
+				
+				  if (eTag != null && !eTag.equals(actualEtag)) 
+				  {
+		                return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED).eTag(actualEtag)
+		                        .body(new JSONObject().put("message", "Plan has been updated by another user!!").toString());
+		           }
+				
+			}
+	       return OK(resultJsonString, actualEtag);
+
+	    }
+	 
+	 
 	
 }
